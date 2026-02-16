@@ -135,9 +135,9 @@ class TaskSearchService {
 
         let matches = []
 
-        // If taskId is provided, do deterministic Firestore lookup first
+        // If taskId is provided, try direct lookup via Algolia first
         if (taskId) {
-            const directMatch = await this.findTaskById(taskId, userProjects, userId, projectId)
+            const directMatch = await this.findTaskById(taskId, userProjects)
             if (directMatch) {
                 matches.push({
                     ...directMatch,
@@ -496,68 +496,64 @@ class TaskSearchService {
     }
 
     /**
-     * Find task by direct ID lookup using Firestore for deterministic behavior.
-     * Searches the task document by exact ID across the user's accessible projects.
+     * Find task by direct ID lookup using Algolia
+     * Searches for tasks where objectID ends with taskId+projectId pattern
      */
-    async findTaskById(taskId, userProjects, userId, preferredProjectId = null) {
-        if (!taskId || !Array.isArray(userProjects) || userProjects.length === 0) {
+    async findTaskById(taskId, userProjects) {
+        if (!this.algoliaClient) {
             return null
         }
 
-        const db = this.options.database
-        const projectsMap = new Map(userProjects.map(p => [p.id, p]))
-        const orderedProjectIds = []
+        try {
+            const index = this.algoliaClient.initIndex(TASKS_INDEX_NAME)
+            const FEED_PUBLIC_FOR_ALL = 0
 
-        // Prefer explicit project when available, then fall back to all other accessible projects.
-        if (preferredProjectId && projectsMap.has(preferredProjectId)) {
-            orderedProjectIds.push(preferredProjectId)
-        }
-        for (const project of userProjects) {
-            if (project.id !== preferredProjectId) {
-                orderedProjectIds.push(project.id)
+            // Build project filters
+            const projectFilters = userProjects.map(p => `projectId:"${p.id}"`).join(' OR ')
+            if (!projectFilters) {
+                return null
             }
-        }
 
-        for (const candidateProjectId of orderedProjectIds) {
-            const project = projectsMap.get(candidateProjectId)
-            if (!project) continue
+            // Search for tasks where objectID contains the taskId
+            // Algolia objectID format is taskId + projectId, so we search for taskId
+            // and then verify the objectID matches the pattern
+            const filters = [`(${projectFilters})`]
 
-            try {
-                const taskDoc = await db.doc(`items/${candidateProjectId}/tasks/${taskId}`).get()
-                if (!taskDoc.exists) continue
+            const searchResponse = await index.search('', {
+                filters: filters.join(' AND '),
+                hitsPerPage: 100, // Search across multiple projects
+                attributesToRetrieve: ['objectID', 'projectId', 'name', 'humanReadableId'],
+            })
 
-                const taskData = taskDoc.data() || {}
-                if (!this.canUserAccessTask(taskData, userId)) continue
-
-                return {
-                    task: { id: taskId, ...taskData },
-                    projectId: candidateProjectId,
-                    projectName: project.name,
+            // Find exact match where objectID starts with taskId
+            for (const hit of searchResponse.hits) {
+                if (hit.objectID && hit.objectID.startsWith(taskId)) {
+                    const project = userProjects.find(p => p.id === hit.projectId)
+                    if (project && hit.objectID === taskId + hit.projectId) {
+                        // Fetch full task data - need userId for visibility filtering
+                        // For direct ID lookup, we'll fetch from database since we have the exact ID
+                        const db = this.options.database
+                        try {
+                            const taskDoc = await db.doc(`items/${hit.projectId}/tasks/${taskId}`).get()
+                            if (taskDoc.exists) {
+                                return {
+                                    task: { id: taskId, ...taskDoc.data() },
+                                    projectId: hit.projectId,
+                                    projectName: project.name,
+                                }
+                            }
+                        } catch (error) {
+                            console.error('TaskSearchService: Error fetching task by ID:', error.message)
+                        }
+                    }
                 }
-            } catch (error) {
-                console.warn('TaskSearchService: Error fetching task by ID from Firestore:', {
-                    taskId,
-                    projectId: candidateProjectId,
-                    error: error.message,
-                })
             }
+
+            return null
+        } catch (error) {
+            console.error('TaskSearchService: Error finding task by ID:', error.message)
+            return null
         }
-
-        return null
-    }
-
-    /**
-     * Basic visibility guard for direct Firestore ID lookups.
-     */
-    canUserAccessTask(taskData, userId) {
-        if (!taskData) return false
-
-        if (!taskData.isPrivate) return true
-
-        if (!userId) return false
-        if (taskData.userId === userId) return true
-
-        return Array.isArray(taskData.isPublicFor) && taskData.isPublicFor.includes(userId)
     }
 
     /**
