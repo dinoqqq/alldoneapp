@@ -54,7 +54,7 @@ describe('DvBotButton task assistant chip', () => {
         require('../../utils/backends/Tasks/tasksFirestore').setTaskAssistant.mockClear()
     })
 
-    test('shows the resolved assistant identity and opens its predefined-task menu', () => {
+    test('shows only the resolved assistant avatar in the compact chip and opens its predefined-task menu', () => {
         resolveAssistantForProjectObject.mockReturnValue({
             uid: 'project-assistant',
             displayName: 'Project Anna',
@@ -67,15 +67,15 @@ describe('DvBotButton task assistant chip', () => {
                 objectId="task-1"
                 objectType="tasks"
                 parentObject={{ id: 'task-1', assistantId: '' }}
-                showAssistantName={true}
                 resolveProjectAssistant={true}
             />
         )
 
-        expect(tree.root.findByType(Text).props.children).toBe('Project Anna')
+        expect(tree.root.findAllByType(Text)).toHaveLength(0)
         expect(tree.root.findByType('AssistantAvatar').props).toEqual(
             expect.objectContaining({ assistantId: 'project-assistant', photoURL: 'anna.jpg' })
         )
+        expect(tree.root.findByType(TouchableOpacity).props.style).toHaveLength(2)
 
         act(() => tree.root.findByType(TouchableOpacity).props.onPress())
 
@@ -98,7 +98,6 @@ describe('DvBotButton task assistant chip', () => {
                 objectId="task-1"
                 objectType="task"
                 parentObject={{ id: 'task-1', assistantId: 'deleted-assistant' }}
-                showAssistantName={true}
                 resolveProjectAssistant={true}
             />
         )
@@ -116,7 +115,32 @@ describe('DvBotButton task assistant chip', () => {
         )
     })
 
-    test('renders a disabled fallback instead of opening an invalid assistant menu', () => {
+    test('uses the generic avatar fallback and still opens the menu when the resolved assistant has no avatar', () => {
+        resolveAssistantForProjectObject.mockReturnValue({
+            uid: 'project-assistant',
+            displayName: 'Project Anna',
+        })
+        const tree = renderer.create(
+            <DvBotButton
+                projectId="project-1"
+                assistantId=""
+                objectId="task-1"
+                objectType="tasks"
+                resolveProjectAssistant={true}
+            />
+        )
+
+        expect(tree.root.findAllByType(Text)).toHaveLength(0)
+        expect(tree.root.findByType('AssistantAvatar').props).toEqual(
+            expect.objectContaining({ assistantId: 'project-assistant', photoURL: undefined, size: 24 })
+        )
+
+        act(() => tree.root.findByType(TouchableOpacity).props.onPress())
+
+        expect(tree.root.findByType('BotOptionsModal').props.assistantId).toBe('project-assistant')
+    })
+
+    test('renders the generic avatar fallback without text when no assistant resolves', () => {
         resolveAssistantForProjectObject.mockReturnValue(null)
         const tree = renderer.create(
             <DvBotButton
@@ -124,13 +148,15 @@ describe('DvBotButton task assistant chip', () => {
                 assistantId="deleted-assistant"
                 objectId="task-1"
                 objectType="tasks"
-                showAssistantName={true}
                 resolveProjectAssistant={true}
             />
         )
 
         const button = tree.root.findByType(TouchableOpacity)
-        expect(tree.root.findByType(Text).props.children).toBe('No assistant')
+        expect(tree.root.findAllByType(Text)).toHaveLength(0)
+        expect(tree.root.findByType('AssistantAvatar').props).toEqual(
+            expect.objectContaining({ photoURL: undefined, size: 24 })
+        )
         expect(button.props.disabled).toBe(true)
         act(() => button.props.onPress())
         expect(tree.root.findAllByType('BotOptionsModal')).toHaveLength(0)
