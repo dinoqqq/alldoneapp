@@ -10,8 +10,7 @@ export const getWorkflowCompletionCopy = (workflow, task, pending) => {
 
     if (isNextWorkflowStepAi(workflow, task)) {
         return {
-            title: 'Your step is complete',
-            subtitle: 'The Assistant step is ready to run',
+            title: 'The assistant step is ready to run',
         }
     }
 

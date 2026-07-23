@@ -11,8 +11,7 @@ const workflow = {
 describe('workflow completion copy', () => {
     test('announces the upcoming Assistant step after a human step', () => {
         expect(getWorkflowCompletionCopy(workflow, { done: false, stepHistory: [-1, '2026-01'] }, false)).toEqual({
-            title: 'Your step is complete',
-            subtitle: 'The Assistant step is ready to run',
+            title: 'The assistant step is ready to run',
         })
     })
 
